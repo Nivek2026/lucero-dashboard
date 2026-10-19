@@ -4,7 +4,7 @@ Lucero ORB + FVG - motor de señales.
 
 Réplica fiel de la lógica de tu indicador de TradingView (ORB, sesgo, FVG,
 modos de retesteo, SL/TP). Descarga velas de 1 minuto, simula la sesión,
-guarda docs/data/state.json (lo lee el dashboard) y avisa a Telegram.
+guarda data/state.json (lo lee el dashboard) y avisa a Telegram.
 """
 import json
 import os
@@ -15,7 +15,7 @@ from datetime import datetime, timedelta, timezone
 # =====================================================================
 # CONFIGURACIÓN: mismos valores que los inputs de tu indicador
 # =====================================================================
-TZ_OFFSET_HOURS = 2            # "UTC+2"
+TZ_OFFSET_HOURS = 9            # "UTC+9" (Tokio)
 SESSION_START = (9, 0)         # 09:00
 SESSION_END = (12, 30)         # 12:30
 ORB_LEN_BARS = 5               # Duración del ORB (velas de 1m)
@@ -24,6 +24,7 @@ MAX_EXPANSION = 3.0            # Filtro de expansión máxima (x rango ORB)
 SL_OPTION = "Borde FVG"        # "Borde FVG" | "Vela de Entrada" | "Rango ORB"
 RR_RATIO = 3.0                 # Ratio R:R
 SL_BUFFER = 0.0                # Margen extra del SL (puntos)
+# Nota: si existe config.json (lo edita el dashboard), sus valores reemplazan a estos.
 
 SYMBOLS = {
     "MGC": {"yahoo": "MGC=F", "name": "MGC1! · Micro Gold"},
@@ -33,7 +34,70 @@ SYMBOLS = {
 SESSIONS_TO_KEEP = 4           # sesión actual + historial
 NOTIFY_MAX_AGE_MIN = 45        # solo avisa de eventos de los últimos N minutos
 STATE_PATH = os.path.join("data", "state.json")
+CONFIG_PATH = "config.json"
 LOCAL_TZ = timezone(timedelta(hours=TZ_OFFSET_HOURS))
+
+
+# =====================================================================
+# CONFIGURACIÓN EDITABLE DESDE EL DASHBOARD (config.json) Y HORARIO
+# =====================================================================
+def _parse_hm(text, default):
+    try:
+        h, m = str(text).split(":")
+        h, m = int(h), int(m)
+        if 0 <= h <= 23 and 0 <= m <= 59:
+            return (h, m)
+    except Exception:  # noqa
+        pass
+    return default
+
+
+def apply_config():
+    global TZ_OFFSET_HOURS, SESSION_START, SESSION_END, ORB_LEN_BARS, RETEST_MODE
+    global MAX_EXPANSION, SL_OPTION, RR_RATIO, SL_BUFFER, LOCAL_TZ
+    try:
+        with open(CONFIG_PATH, encoding="utf-8") as fh:
+            cfg = json.load(fh)
+    except Exception:  # noqa
+        cfg = {}
+    try:
+        TZ_OFFSET_HOURS = float(cfg.get("tz_offset", TZ_OFFSET_HOURS))
+        SESSION_START = _parse_hm(cfg.get("session_start"), SESSION_START)
+        SESSION_END = _parse_hm(cfg.get("session_end"), SESSION_END)
+        ORB_LEN_BARS = max(1, int(cfg.get("orb_bars", ORB_LEN_BARS)))
+        RETEST_MODE = int(cfg.get("retest_mode", RETEST_MODE))
+        if RETEST_MODE not in (1, 2, 3):
+            RETEST_MODE = 2
+        MAX_EXPANSION = float(cfg.get("max_expansion", MAX_EXPANSION))
+        SL_OPTION = str(cfg.get("sl_option", SL_OPTION))
+        if SL_OPTION not in ("Borde FVG", "Vela de Entrada", "Rango ORB"):
+            SL_OPTION = "Borde FVG"
+        RR_RATIO = float(cfg.get("rr", RR_RATIO))
+        SL_BUFFER = float(cfg.get("sl_buffer", SL_BUFFER))
+    except Exception as e:  # noqa
+        print("config.json inválido, se usan valores por defecto:", e)
+    LOCAL_TZ = timezone(timedelta(hours=TZ_OFFSET_HOURS))
+
+
+def _tz_label():
+    return ("+" if TZ_OFFSET_HOURS >= 0 else "") + f"{TZ_OFFSET_HOURS:g}"
+
+
+def _hm(t):
+    return f"{t[0]:02d}:{t[1]:02d}"
+
+
+def should_run():
+    """El escaneo automático solo corre dentro de la ventana de sesión (±margen)."""
+    if os.environ.get("FORCE_RUN") == "1":      # botón "Escanear ahora" o ejecución manual
+        return True
+    now_local = datetime.now(timezone.utc).astimezone(LOCAL_TZ)
+    if now_local.weekday() >= 5:                 # sábado y domingo (hora local)
+        return False
+    m = now_local.hour * 60 + now_local.minute
+    start = SESSION_START[0] * 60 + SESSION_START[1]
+    end = SESSION_END[0] * 60 + SESSION_END[1]
+    return start - 30 <= m < end + 20
 
 
 # =====================================================================
@@ -285,7 +349,7 @@ def _hhmm(t):
 
 def build_message(code, ev, now_ts):
     delay = max(0, int((now_ts - ev["t"]) / 60))
-    foot = (f"\n\n⏱ Vela de las {_hhmm(ev['t'])} (UTC+{TZ_OFFSET_HOURS}). "
+    foot = (f"\n\n⏱ Vela de las {_hhmm(ev['t'])} (UTC{_tz_label()}). "
             f"Aviso ~{delay} min después: datos con retraso.")
     if ev["type"] == "ORB_BREAK":
         up = ev["side"] == "UP"
@@ -355,9 +419,11 @@ def main():
     sent = set(prev.get("sent", []))
 
     out = {"updated": int(now_ts), "tz_offset": TZ_OFFSET_HOURS,
-           "session": f"{SESSION_START[0]:02d}:{SESSION_START[1]:02d}-{SESSION_END[0]:02d}:{SESSION_END[1]:02d}",
-           "config": {"retest_mode": RETEST_MODE, "sl_option": SL_OPTION, "rr": RR_RATIO,
-                      "orb_bars": ORB_LEN_BARS},
+           "session": f"{_hm(SESSION_START)}-{_hm(SESSION_END)}",
+           "config": {"tz_offset": TZ_OFFSET_HOURS, "session_start": _hm(SESSION_START),
+                      "session_end": _hm(SESSION_END), "orb_bars": ORB_LEN_BARS,
+                      "retest_mode": RETEST_MODE, "max_expansion": MAX_EXPANSION,
+                      "sl_option": SL_OPTION, "rr": RR_RATIO, "sl_buffer": SL_BUFFER},
            "symbols": {}}
 
     for code, cfg in SYMBOLS.items():
@@ -416,4 +482,8 @@ def main():
 
 
 if __name__ == "__main__":
+    apply_config()
+    if "--gate" in sys.argv:
+        print("run=" + ("true" if should_run() else "false"))
+        sys.exit(0)
     sys.exit(main())
