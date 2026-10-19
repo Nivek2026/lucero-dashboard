@@ -32,7 +32,7 @@ SYMBOLS = {
 
 SESSIONS_TO_KEEP = 4           # sesión actual + historial
 NOTIFY_MAX_AGE_MIN = 45        # solo avisa de eventos de los últimos N minutos
-STATE_PATH = os.path.join("docs", "data", "state.json")
+STATE_PATH = os.path.join("data", "state.json")
 LOCAL_TZ = timezone(timedelta(hours=TZ_OFFSET_HOURS))
 
 
