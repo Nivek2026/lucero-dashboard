@@ -2,7 +2,8 @@ name: Escaneo ORB + FVG
 
 on:
   schedule:
-    - cron: "*/5 6-10 * * 1-5"
+    # Se despierta cada 5 min; el propio motor decide si está dentro de tu horario (config.json)
+    - cron: "*/5 * * * *"
   workflow_dispatch:
 
 permissions:
@@ -19,20 +20,31 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Comprobar horario
+        id: gate
+        env:
+          FORCE_RUN: ${{ github.event_name == 'workflow_dispatch' && '1' || '0' }}
+        run: python3 engine.py --gate >> "$GITHUB_OUTPUT"
+
       - uses: actions/setup-python@v5
+        if: steps.gate.outputs.run == 'true'
         with:
           python-version: "3.11"
           cache: pip
 
-      - run: pip install -r requirements.txt
+      - name: Instalar dependencias
+        if: steps.gate.outputs.run == 'true'
+        run: pip install -r requirements.txt
 
       - name: Ejecutar motor
+        if: steps.gate.outputs.run == 'true'
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python engine.py
 
       - name: Guardar estado
+        if: steps.gate.outputs.run == 'true'
         run: |
           git config user.name  "lucero-bot"
           git config user.email "lucero-bot@users.noreply.github.com"
