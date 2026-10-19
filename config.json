@@ -1,0 +1,11 @@
+{
+  "tz_offset": 9,
+  "session_start": "09:00",
+  "session_end": "12:30",
+  "orb_bars": 5,
+  "retest_mode": 2,
+  "max_expansion": 3.0,
+  "sl_option": "Borde FVG",
+  "rr": 3.0,
+  "sl_buffer": 0.0
+}
