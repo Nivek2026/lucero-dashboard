@@ -1,7 +1,7 @@
 {
   "tz_offset": 2,
-  "session_start": "15:30",
-  "session_end": "18:30",
+  "session_start": "00:00",
+  "session_end": "02:00",
   "orb_bars": 5,
   "retest_mode": 2,
   "sl_option": "¿Debería FVG?",
